@@ -1,0 +1,264 @@
+---
+title: "Commerce Comission Lines Company Data"
+subtitle: "Looking for load control data"
+author: "Ben Anderson, b.anderson@soton.ac.uk"
+date: 'Last run at: `r Sys.time()`'
+output:
+  bookdown::html_document2:
+    fig_caption: yes
+    code_folding: hide
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+    toc_float: TRUE
+  bookdown::pdf_document2:
+    fig_caption: yes
+    number_sections: yes
+  bookdown::word_document2:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+    fig_width: 5
+always_allow_html: yes
+bibliography: '`r path.expand("~/bibliography.bib")`'
+---
+
+
+```{r knitrSetup, include=FALSE}
+rmdParams <- list()
+
+rmdParams$startTime <- proc.time() # used at the end
+
+knitr::opts_chunk$set(echo = FALSE) # by default turn off code echo
+
+# libraries
+library(data.table)
+library(flextable) 
+library(ggplot2)
+library(plotly)
+library(readxl)
+
+# > functions ----
+makeFlexTable <- function(df, cap = "caption"){
+  # makes a pretty flextable - see https://cran.r-project.org/web/packages/flextable/index.html
+  ft <- flextable::flextable(df)
+  ft <- colformat_double(ft, digits = 1)
+  ft <- fontsize(ft, size = 9)
+  ft <- fontsize(ft, size = 10, part = "header")
+  ft <- set_caption(ft, caption = cap)
+  return(flextable::autofit(ft))
+}
+
+# paths
+
+rmdParams$dPath <- path.expand("~/Dropbox/Work/Otago/data/comCom/") # change for you
+
+```
+
+# Introduction
+
+Looking for load control data
+
+# Inquiry into 'new' technologies
+
+Data source: https://comcom.govt.nz/regulated-industries/electricity-lines/electricity-distributor-performance-and-data/impact-of-emerging-technologies-in-monopoly-parts-of-electricity-sector
+
+```{r loadNewTechData}
+df <- readxl::read_xlsx(paste0(rmdParams$dPath, "Electricity-distribution-businesses-emerging-technology-data-10-October-2018.xlsx"),
+                        sheet = "Database")
+
+dt <- data.table::as.data.table(df)
+
+names(dt)
+makeFlexTable(head(dt))
+
+makeFlexTable(dt[Category %like% "control", .(nRows = .N), keyby = .(Category, Description)])
+```
+
+Check who may not have returned specific data items under ripple/other load control...
+
+```{r extractLoadControl}
+rc_dt <- dt[Description %like% "Estimated number of ICPs" |
+              Description %like% "Number of ICPs" |
+              Description %like% "Load control capacity from ripple control" |
+              Description %like% "Load control capacity from other load control"]
+
+message("Any NA data?")
+
+rc_dt[, numValue := as.numeric(Value)]
+
+naT <- rc_dt[is.na(numValue)]
+
+ft <- makeFlexTable(naT[,.(EDB, Year, Description, Value)])
+set_caption(ft, "Rows with missing data against ripple or other load control entries")
+```
+
+
+> So some EDBs returned unknown to both in 2014 (Electricity Invercargill, OtagoNet, The Power Company), Vector returned unknown to ripple control capacity in all years but must have reported numbers.
+
+## Numbers of ICPs
+
+Cross-check against \@ref(tab:extractLoadControl) for potentially missing EDBs.
+
+Figure \@ref(fig:plotNICP) shows declared number of ICPs with load control over time.
+
+```{r plotNICP, fig.cap="Declared number ICPs with load control over time"}
+t <- rc_dt[Description == "Estimated number of ICPs with ripple control" |
+        Description == "Number of ICPs with other load control", .(nICPs = sum(as.numeric(Value), na.rm = TRUE)),
+      keyby = .(Description, Year)]
+
+makeFlexTable(t)
+
+plotDT <- rc_dt[Description == "Estimated number of ICPs with ripple control" |
+        Description == "Number of ICPs with other load control", .(nICPs = sum(as.numeric(Value), na.rm = TRUE)),
+      keyby = .(Description, Year, EDB)]
+
+p <- ggplot2::ggplot(plotDT, aes(x = Year, y = nICPs, color = EDB, group = EDB)) +
+  geom_line() +
+  facet_grid(Description ~ .)
+  
+p
+```
+
+
+Attempt to plotly the plot for interaction - try hovering:
+
+```{r plotlyVersionNICPs}
+plotly::ggplotly(p)
+```
+
+But check  values - are they 'clumped'? Or do they look realistic? Some of those look suspiciously flat...
+
+```{r check_cap}
+ggplot2::ggplot(plotDT, aes(x = nICPs)) +
+  geom_histogram() +
+  facet_grid(Year ~ Description, scales = "free")
+```
+
+Numbers do look a bit '[heaped](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5976260/)'...
+
+## Capacity
+
+Cross-check against \@ref(tab:extractLoadControl) for potentially missing EDBs.
+
+> i.e. Vector in all years
+
+Figure \@ref(fig:extractLoadControlSumMW) shows load control capacity over time (MW).
+
+```{r extractLoadControlSumMW, fig.cap="Declared load control capacity over time (MW)"}
+rc_dt <- dt[Description %like% "ripple control" |
+              Description %like% "load control"]
+
+t <- rc_dt[Description == "Load control capacity from ripple control" |
+        Description == "Load control capacity from other load control", .(sumCapacity = sum(as.numeric(Value), na.rm = TRUE)),
+      keyby = .(Description, Year)]
+
+makeFlexTable(t)
+
+plotDT <- rc_dt[Description == "Load control capacity from ripple control" |
+        Description == "Load control capacity from other load control", .(sumCapacity = sum(as.numeric(Value), na.rm = TRUE),
+                                                                          nValues = .N),
+      keyby = .(Description, Year, EDB)]
+# check nValues = 1 (if so we don't actually need to sum)
+
+p <- ggplot2::ggplot(plotDT, aes(x = Year, y = sumCapacity, color = EDB, group = EDB)) +
+  geom_line() +
+  facet_grid(. ~ Description, scales = "free") +
+  labs(y = "Capacity (MW)") +
+  theme(legend.position = "bottom")
+
+p
+```
+
+Attempt to plotly the plot for interaction - try hovering:
+
+```{r plotlyVersionMW}
+plotly::ggplotly(p)
+```
+
+But check capacity values - are they 'clumped'? Or do they look realistic? Some of those look suspiciously flat...
+
+```{r check_nICP}
+ggplot2::ggplot(plotDT, aes(x = sumCapacity)) +
+  geom_histogram(binwidth = 2) +
+  facet_grid(Year ~ Description, scales = "free")
+```
+Does look a bit like there is clumping/heaping - so some of the values for ripple control may be 'estimated & rounded' rather than calculated from base data.
+
+# Lines companies performance data
+
+Data Source: https://comcom.govt.nz/regulated-industries/electricity-lines/electricity-distributor-performance-and-data/information-disclosed-by-electricity-distributors
+
+Loading takes time - large .xlsm file...
+
+> skip this section for now
+
+```{r loadPerfData, warning=FALSE, eval = FALSE}
+df <- readxl::read_xlsx(paste0(rmdParams$dPath, "/Electricity-distributers-information-disclosure-data-2013-2020.xlsm"),
+                        sheet = "Database")
+
+dt <- data.table::as.data.table(df)
+names(dt)
+
+makeFlexTable(head(dt))
+```
+
+Search for 'load' / 'Load' - maybe this didn't work too well.
+
+```{r searchForLoad, eval = FALSE}
+t_dt <- dt[Category %like% "load" | 
+             `Sub-category` %like% "load" |
+             Description %like% "load" |
+             Category %like% "Load" | 
+             `Sub-category` %like% "Load" |
+             Description %like% "Load"]
+
+makeFlexTable(t_dt[, .(count = .N), keyby = .(Category, `Sub-category`, Description)])
+```
+
+Anything there?
+
+Search for 'control'
+
+```{r searchForControl, eval = FALSE}
+t_dt <- dt[Category %like% "control" | 
+             `Sub-category` %like% "control" |
+             Description %like% "control" ]
+
+makeFlexTable(t_dt[, .(count = .N), keyby = .(Category, `Sub-category`, Description)])
+```
+
+Anything there?
+
+# R environment
+
+```{r check runtime, include=FALSE}
+# within Rmd timing
+t <- proc.time() - rmdParams$startTime
+elapsed <- t[[3]]
+```
+
+Report generated in `r round(elapsed,2)` seconds ( `r round(elapsed/60,2)` minutes) using [knitr](https://cran.r-project.org/package=knitr) in [RStudio](http://www.rstudio.com) with `r R.version.string` running on `r R.version$platform`.
+
+## R packages used
+
+ * base R [@baseR]
+ * bookdown [@bookdown]
+ * data.table [@data.table]
+ * flextable [@flextable]
+ * ggplot2 [@ggplot2]
+ * knitr [@knitr]
+ * rmarkdown [@rmarkdown]
+
+## Session info
+
+```{r sessionInfo, echo=FALSE}
+sessionInfo()
+```
+
+```{r runAll}
+```
+
+# References
+
